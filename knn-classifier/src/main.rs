@@ -1,5 +1,5 @@
 use image::{ImageReader, DynamicImage, GenericImageView, Pixel, Rgb};
-use std::io::BufReader; //TODO switch accesseses to be io:: in program, not up here.
+use std::io::BufReader;
 use std::fs;
 
 const MNIST_WIDTH: usize = 28;
@@ -119,13 +119,13 @@ impl TrainingData {
                 //Read in the image data
                 let img = match MNISTImage::from_file(&path) {
                     Ok(unpacked_image) => unpacked_image,
-                    Err(string) => return Err(string),
+                    Err(string) => return Err(string), //Our functions are already set up to return user-readable Strings, so we don't need to make one up like we did for the external functions
                 };
 
                 //Add the new image to the end of the new dataset
                 new_trainingdata.dataset.push(ClassedImage {
                     image: img,
-                    class: 0,
+                    class: digit,
                 });
             }
         }
