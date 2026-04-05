@@ -79,6 +79,19 @@ impl MNISTImage {
         }
         println!("{}",output)
     }
+
+    fn calculate_distance(&self, other: &MNISTImage) -> f64 {
+
+
+
+        let mut accumulator: f64 = 0f64;
+        for i in 0..(MNIST_WIDTH * MNIST_HEIGHT){
+            accumulator += ((self.data[i] as i16 - other.data[i] as i16) as f64).powf(2f64);
+        }
+        return accumulator.sqrt()
+    }
+
+
 }
 
 impl TrainingData {
@@ -145,4 +158,5 @@ fn main() {
         }
     };
     println!("Data imported successfully! Length: {}", dataset.dataset.len());
+
 }
