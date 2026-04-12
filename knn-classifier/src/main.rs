@@ -3,6 +3,7 @@ use std::io::BufReader;
 use std::fs;
 use rayon::prelude::*;
 use std::time::Instant;
+use std::cmp::Ordering;
 
 const MNIST_WIDTH: usize = 28;
 const MNIST_HEIGHT: usize = MNIST_WIDTH;
@@ -83,14 +84,12 @@ impl MNISTImage {
     }
 
     fn parallel_calculate_distance(&self, other: &MNISTImage) -> f64 {
-        let mut accumulator: f64 = 0f64;
-        accumulator = self.data.par_iter().zip(other.data.par_iter()).map(|(a, b)| ((*a as i16 - *b as i16) as f64).powf(2f64)).sum();
+        let accumulator: f64 = self.data.par_iter().zip(other.data.par_iter()).map(|(a, b)| ((*a as i16 - *b as i16) as f64).powf(2f64)).sum();
         return accumulator.sqrt()
     }
 
     fn calculate_distance(&self, other: &MNISTImage) -> f64 {
-        let mut accumulator: f64 = 0f64;
-        accumulator = self.data.iter().zip(other.data.iter()).map(|(a, b)| ((*a as i16 - *b as i16) as f64).powf(2f64)).sum();
+        let accumulator: f64 = self.data.iter().zip(other.data.iter()).map(|(a, b)| ((*a as i16 - *b as i16) as f64).powf(2f64)).sum();
         return accumulator.sqrt()
     }
 }
@@ -152,12 +151,27 @@ impl TrainingData {
         let mut lowest_distances = vec![(f64::INFINITY,0u8); k];
 
         for training_img in &self.dataset {
-            let distance = image.parallel_calculate_distance(&training_img.image);
+            let distance = image.calculate_distance(&training_img.image);
             place_in_vector(distance, &mut lowest_distances, training_img.class);
         }
 
         Ok(take_votes(lowest_distances))
     }
+
+    fn parallel_classify(&self, image: &MNISTImage, k: u32) -> Result<u8, String> {
+        let k = if let Ok(k) = usize::try_from(k) { k } else { return Err(format!("k of {} is larger than maximum array size on this platform.", k)) };
+
+        let mut distances: Vec<(f64, u8)> = self.dataset.par_iter().map(|x| (image.calculate_distance(&x.image), x.class)).collect();
+
+        distances.par_sort_by(|a, b| float_compare(a.0, b.0));
+        distances.truncate(k);
+
+        Ok(take_votes(distances))
+    }
+}
+
+fn float_compare(a: f64, b: f64) -> Ordering{
+    a.partial_cmp(&b).expect(&format!("{} and {} cannot be compared", a, b))
 }
 
 fn take_votes(lowest_distances: Vec<(f64, u8)>) -> u8{
@@ -227,7 +241,7 @@ fn test(model: TrainingData, k: u32, data_directory: &str, verbose: bool) -> Res
             };
 
             let t0 = Instant::now();
-            let class = match model.classify(&img, k) {
+            let class = match model.parallel_classify(&img, k) {
                 Ok(class) => class,
                 Err(string) => return Err(string),
             };
