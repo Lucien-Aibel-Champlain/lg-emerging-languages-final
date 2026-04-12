@@ -116,34 +116,71 @@ impl TrainingData {
                 Err(_) => return Err(format!("Cannot open {} for reading", current_directory)),
             };
 
-            for entry in reader {
-                //Check whether entry exists
-                let entry = match entry {
-                    Ok(unpacked_entry) => unpacked_entry,
-                    Err(_) => return Err(format!("Error unpacking entry under {}", current_directory)),
+            let digitset: Vec<Result<MNISTImage, String>> = reader.map(|entry| Self::entry_to_img(&entry, &current_directory)).collect();
+            for img_result in digitset {
+                match img_result {
+                    Ok(img) => new_trainingdata.dataset.push(ClassedImage {
+                        image: img,
+                        class: digit,
+                    }),
+                    Err(msg) => return Err(msg),
                 };
-
-                //Convert the DirEntry to a string path to the file in question
-                let path = match entry.path().to_str() {
-                    Some(unpacked_path) => unpacked_path.to_string(), //.to_str gives a slice which will be lost when the result of entry.path gets deallocated, so we convert it to a String
-                    None => return Err(format!("Cannot convert path {} to UTF-8 String", entry.path().display())),
-                };
-
-                //Read in the image data
-                let img = match MNISTImage::from_file(&path) {
-                    Ok(unpacked_image) => unpacked_image,
-                    Err(string) => return Err(string), //Our functions are already set up to return user-readable Strings, so we don't need to make one up like we did for the external functions
-                };
-
-                //Add the new image to the end of the new dataset
-                new_trainingdata.dataset.push(ClassedImage {
-                    image: img,
-                    class: digit,
-                });
             }
         }
 
         Ok(new_trainingdata)
+    }
+
+    fn parallel_from_directory(directory: &str) -> Result<TrainingData, String> {
+        let training_directory = directory.to_owned() + "/train/";
+        
+        let mut new_trainingdata = TrainingData::new();
+
+        for digit in 0..=9 {
+            //Create a new string (cloned from the general training string) to point to this digit's subfolder
+            let current_directory = training_directory.clone() + &digit.to_string();
+
+            //Get a reader to list all entries inside current_directory
+            let reader = match fs::read_dir(&current_directory) {
+                Ok(unpacked_reader) => unpacked_reader,
+                Err(_) => return Err(format!("Cannot open {} for reading", current_directory)),
+            };
+
+            let reader: Vec<Result<fs::DirEntry, std::io::Error>> = reader.collect();
+            let reader = reader.par_iter();
+            let digitset: Vec<Result<MNISTImage, String>> = reader.map(|entry| Self::entry_to_img(entry, &current_directory)).collect();
+            for img_result in digitset {
+                match img_result {
+                    Ok(img) => new_trainingdata.dataset.push(ClassedImage {
+                        image: img,
+                        class: digit,
+                    }),
+                    Err(msg) => return Err(msg),
+                };
+            }
+        }
+
+        Ok(new_trainingdata)
+    }
+
+    fn entry_to_img(entry: &Result<fs::DirEntry, std::io::Error>, current_directory: &str) -> Result<MNISTImage, String> {
+        //Check whether entry exists
+        let entry = match entry {
+            Ok(unpacked_entry) => unpacked_entry,
+            Err(_) => return Err(format!("Error unpacking entry under {}", current_directory)),
+        };
+
+        //Convert the DirEntry to a string path to the file in question
+        let path = match entry.path().to_str() {
+            Some(unpacked_path) => unpacked_path.to_string(), //.to_str gives a slice which will be lost when the result of entry.path gets deallocated, so we convert it to a String
+            None => return Err(format!("Cannot convert path {} to UTF-8 String", entry.path().display())),
+        };
+
+        //Read in the image data
+        match MNISTImage::from_file(&path) {
+            Ok(unpacked_image) => Ok(unpacked_image),
+            Err(string) => return Err(string), //Our functions are already set up to return user-readable Strings, so we don't need to make one up like we did for the external functions
+        }
     }
 
     fn classify(&self, image: &MNISTImage, k: u32) -> Result<u8, String> {
@@ -266,13 +303,19 @@ fn test(model: TrainingData, k: u32, data_directory: &str, verbose: bool) -> Res
 const DATASET_DIRECTORY: &str = "mnist_png";
 
 fn main() {
-    let dataset = match TrainingData::from_directory(DATASET_DIRECTORY) {
+    let thread_count = 4;
+    let threads_beyond_main = thread_count - 1
+    rayon::ThreadPoolBuilder::new().num_threads(threads_beyond_main).build_global(); //set maximum threads across all rayon pools
+
+    let t0 = Instant::now();
+    let dataset = match TrainingData::parallel_from_directory(DATASET_DIRECTORY) {
         Ok(dataset) => dataset,
         Err(msg) => {
             println!("Error loading data: {}",msg);
             return;
         }
     };
+    println!("loaded in {}s", t0.elapsed().as_secs_f64());
     println!("Data imported successfully! Length: {}", dataset.dataset.len());
 
     println!("Beginning testing ...");
