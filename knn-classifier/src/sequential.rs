@@ -1,8 +1,6 @@
 use image::{ImageReader, DynamicImage, GenericImageView, Pixel, Rgb};
 use std::io::BufReader;
 use std::fs;
-use rayon::prelude::*;
-use std::time::Instant;
 
 const MNIST_WIDTH: usize = 28;
 const MNIST_HEIGHT: usize = MNIST_WIDTH;
@@ -82,15 +80,11 @@ impl MNISTImage {
         println!("{}",output)
     }
 
-    fn parallel_calculate_distance(&self, other: &MNISTImage) -> f64 {
-        let mut accumulator: f64 = 0f64;
-        accumulator = self.data.par_iter().zip(other.data.par_iter()).map(|(a, b)| ((*a as i16 - *b as i16) as f64).powf(2f64)).sum();
-        return accumulator.sqrt()
-    }
-
     fn calculate_distance(&self, other: &MNISTImage) -> f64 {
         let mut accumulator: f64 = 0f64;
-        accumulator = self.data.iter().zip(other.data.iter()).map(|(a, b)| ((*a as i16 - *b as i16) as f64).powf(2f64)).sum();
+        for i in 0..(MNIST_WIDTH * MNIST_HEIGHT){
+            accumulator += ((self.data[i] as i16 - other.data[i] as i16) as f64).powf(2f64);
+        }
         return accumulator.sqrt()
     }
 }
@@ -152,7 +146,7 @@ impl TrainingData {
         let mut lowest_distances = vec![(f64::INFINITY,0u8); k];
 
         for training_img in &self.dataset {
-            let distance = image.parallel_calculate_distance(&training_img.image);
+            let distance = image.calculate_distance(&training_img.image);
             place_in_vector(distance, &mut lowest_distances, training_img.class);
         }
 
@@ -226,12 +220,10 @@ fn test(model: TrainingData, k: u32, data_directory: &str, verbose: bool) -> Res
                 Err(string) => return Err(string), //Our functions are already set up to return user-readable Strings, so we don't need to make one up like we did for the external functions
             };
 
-            let t0 = Instant::now();
             let class = match model.classify(&img, k) {
                 Ok(class) => class,
                 Err(string) => return Err(string),
             };
-            println!("classed in {}s", t0.elapsed().as_secs_f64());
 
             if class == digit {
                 successes += 1;
