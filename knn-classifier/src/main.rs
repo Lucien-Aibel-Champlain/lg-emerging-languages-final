@@ -1,4 +1,4 @@
-use crate::common::{MNIST_HEIGHT, MNIST_WIDTH, MNISTImage, test, TrainingData};
+use crate::common::{MNIST_HEIGHT, MNIST_WIDTH, MNISTImage, TrainingData};
 
 pub mod common;
 
@@ -25,7 +25,7 @@ fn main() {
     println!("Data imported successfully! Length: {}", dataset.dataset.len());
 
     println!("Beginning testing ...");
-    match test(dataset, 4, DATASET_DIRECTORY, true) {
+    match dataset.test(4, DATASET_DIRECTORY, true) {
         Ok(score) => println!("Test complete.\nAccuracy: {}%", score * 100.0),
         Err(string) => println!("Error while testing: {}",string),
     }

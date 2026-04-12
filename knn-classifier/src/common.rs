@@ -1,7 +1,6 @@
 use image::{ImageReader, DynamicImage, GenericImageView, Pixel, Rgb};
 use std::io::BufReader;
 use std::fs;
-use std::collections::HashMap;
 
 pub const MNIST_WIDTH: usize = 28;
 pub const MNIST_HEIGHT: usize = MNIST_WIDTH;
@@ -19,8 +18,8 @@ pub struct TrainingData {
     pub dataset: Vec<ClassedImage>,
 }
 
-struct DistanceFinder {
-    lowest_distances: Vec<(f64, u8)>,
+struct DistanceFinder<T: Clone + Eq + std::fmt::Display> {
+    lowest_distances: Vec<(f64, Option<T>)>,
 }
 
 impl MNISTImage {
@@ -151,101 +150,121 @@ impl TrainingData {
             None => Err("No training data found to compare to.".to_string()),
         }
     }
+
+    pub fn test(&self, k: u32, data_directory: &str, verbose: bool) -> Result<f64, String> {
+        let mut successes = 0;
+        let mut total = 0;
+        let test_directory = data_directory.to_owned() + "/test/";
+
+        for digit in 0..=9 {
+            //Create a new string (cloned from the general training string) to point to this digit's subfolder
+            let current_directory = test_directory.clone() + &digit.to_string();
+
+            //Get a reader to list all entries inside current_directory
+            let reader = match fs::read_dir(&current_directory) {
+                Ok(unpacked_reader) => unpacked_reader,
+                Err(_) => return Err(format!("Cannot open {} for reading", current_directory)),
+            };
+            
+            for entry in reader {
+                //Check whether entry exists
+                let entry = match entry {
+                    Ok(unpacked_entry) => unpacked_entry,
+                    Err(_) => return Err(format!("Error unpacking entry under {}", current_directory)),
+                };
+
+                //Convert the DirEntry to a string path to the file in question
+                let path = match entry.path().to_str() {
+                    Some(unpacked_path) => unpacked_path.to_string(), //.to_str gives a slice which will be lost when the result of entry.path gets deallocated, so we convert it to a String
+                    None => return Err(format!("Cannot convert path {} to UTF-8 String", entry.path().display())),
+                };
+
+                //Read in the image data
+                let img = match MNISTImage::from_file(&path) {
+                    Ok(unpacked_image) => unpacked_image,
+                    Err(string) => return Err(string), //Our functions are already set up to return user-readable Strings, so we don't need to make one up like we did for the external functions
+                };
+
+                let class = match self.classify(&img, k) {
+                    Ok(class) => class,
+                    Err(string) => return Err(string),
+                };
+
+                if class == digit {
+                    successes += 1;
+                }
+                if verbose {
+                    match class == digit {
+                        true => println!("Succesfully classed {}.", path),
+                        false => println!("MISS on test case {}. Expected result {}, got {}.", path, digit, class),
+                    }
+                }
+                total += 1;
+            }
+        }
+
+        Ok(f64::from(successes) / f64::from(total))
+    }
 }
 
-impl DistanceFinder {
-    fn new(max_size: usize) -> DistanceFinder {
+impl<T: Clone + Eq + std::cmp::PartialOrd<T> + std::fmt::Display> DistanceFinder<T> {
+    fn new(max_size: usize) -> DistanceFinder<T> {
         DistanceFinder {
-            lowest_distances: vec![(f64::INFINITY,0u8); max_size],
+            lowest_distances: vec![(f64::INFINITY,None); max_size],
         }
     }
 
-    fn ordered_insert(&mut self, val: f64, class: u8) {
+    fn ordered_insert(&mut self, val: f64, class: T) {
         if val >= self.lowest_distances[0].0 {
             return;
         }
         let len = self.lowest_distances.len();
         for i in 1..len {
-            self.lowest_distances[i - 1] = self.lowest_distances[i];
+            self.lowest_distances[i - 1] = self.lowest_distances[i].clone();
             if val > self.lowest_distances[i].0 {
-                self.lowest_distances[i - 1] = (val, class);
+                self.lowest_distances[i - 1] = (val, Some(class));
                 return;
             }
         }
-        self.lowest_distances[len - 1] = (val, class);
+        self.lowest_distances[len - 1] = (val, Some(class));
     }
 
-    fn count_votes(&self) -> Option<u8> {
-        let mut votes: HashMap<u8, u32> = HashMap::new();
+    fn add_vote(&self, votes: &mut Vec<(T, u32)>, class_add: &T) {
+        for i in 0..votes.len() {
+            if votes[i].0 == *class_add {
+                votes[i].1 += 1;
+                return
+            } else if votes[i].0 > *class_add {
+                votes.insert(i, (class_add.clone(), 1));
+                return
+            }
+        }
+        votes.push((class_add.clone(), 1));
+    }
+
+    fn count_votes(&self) -> Option<T> {
+        let mut votes: Vec<(T, u32)> = Vec::new();
         for (_dist, class) in &self.lowest_distances {
-            votes.entry(*class).and_modify(|num| { *num += 1 }).or_insert(1);
+            if let Some(class) = class {
+                self.add_vote(&mut votes, class);
+            };
         }
 
-        self.find_highest(votes.iter())
+        self.find_highest(votes)
     }
 
-    fn find_highest<'a>(&self, mut iterator: impl Iterator<Item=(&'a u8, &'a u32)>) -> Option<u8> {
-        let mut lowest = if let Some(pair) = iterator.next() { (*pair.0, *pair.1) } else { return None };
-        for (class, votes) in iterator {
-            if *votes > lowest.1 {
-                lowest = (*class, *votes);
-            }
+    fn find_highest(&self, vector: Vec<(T, u32)>) -> Option<T> {
+        if vector.len() == 0 {
+            return None
         }
-        Some(lowest.0)
-    }
-}
-
-pub fn test(model: TrainingData, k: u32, data_directory: &str, verbose: bool) -> Result<f64, String> {
-    let mut successes = 0;
-    let mut total = 0;
-    let test_directory = data_directory.to_owned() + "/test/";
-
-    for digit in 0..=9 {
-        //Create a new string (cloned from the general training string) to point to this digit's subfolder
-        let current_directory = test_directory.clone() + &digit.to_string();
-
-        //Get a reader to list all entries inside current_directory
-        let reader = match fs::read_dir(&current_directory) {
-            Ok(unpacked_reader) => unpacked_reader,
-            Err(_) => return Err(format!("Cannot open {} for reading", current_directory)),
-        };
-        
-        for entry in reader {
-            //Check whether entry exists
-            let entry = match entry {
-                Ok(unpacked_entry) => unpacked_entry,
-                Err(_) => return Err(format!("Error unpacking entry under {}", current_directory)),
-            };
-
-            //Convert the DirEntry to a string path to the file in question
-            let path = match entry.path().to_str() {
-                Some(unpacked_path) => unpacked_path.to_string(), //.to_str gives a slice which will be lost when the result of entry.path gets deallocated, so we convert it to a String
-                None => return Err(format!("Cannot convert path {} to UTF-8 String", entry.path().display())),
-            };
-
-            //Read in the image data
-            let img = match MNISTImage::from_file(&path) {
-                Ok(unpacked_image) => unpacked_image,
-                Err(string) => return Err(string), //Our functions are already set up to return user-readable Strings, so we don't need to make one up like we did for the external functions
-            };
-
-            let class = match model.classify(&img, k) {
-                Ok(class) => class,
-                Err(string) => return Err(string),
-            };
-
-            if class == digit {
-                successes += 1;
-            }
-            if verbose {
-                match class == digit {
-                    true => println!("Succesfully classed {}.", path),
-                    false => println!("MISS on test case {}. Expected result {}, got {}.", path, digit, class),
+        let mut highest = &vector[0];
+        if vector.len() > 1 {
+            for i in 1..vector.len() {
+                if vector[i].1 > highest.1 {
+                    highest = &vector[i];
                 }
             }
-            total += 1;
         }
+        Some(highest.0.clone())
     }
-
-    Ok(f64::from(successes) / f64::from(total))
 }
