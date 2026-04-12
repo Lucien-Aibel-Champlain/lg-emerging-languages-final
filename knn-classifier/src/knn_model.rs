@@ -58,12 +58,12 @@ pub trait KNNModel {
                     Err(string) => return Err(string), //Our functions are already set up to return user-readable Strings, so we don't need to make one up like we did for the external functions
                 };
 
-                let t0 = Instant::now();
+                let class_t0 = Instant::now();
                 let class = match self.classify(&img, k) {
                     Ok(class) => class,
                     Err(string) => return Err(string),
                 };
-                println!("classed in {}s", t0.elapsed().as_secs_f64());
+                let class_t0 = class_t0.elapsed().as_secs_f64();
 
                 if class == digit {
                     successes += 1;
@@ -73,6 +73,7 @@ pub trait KNNModel {
                         true => println!("Succesfully classed {}.", path),
                         false => println!("MISS on test case {}. Expected result {}, got {}.", path, digit, class),
                     }
+                    println!("classed in {}s", class_t0);
                 }
                 total += 1;
             }
@@ -102,7 +103,7 @@ pub trait KNNModel {
         highest.1
     }
 
-    fn load_and_test(directory: &str) {
+    fn load_and_test(directory: &str, verbose: bool) {
         let t0 = Instant::now();
         let model = match Self::from_directory(directory) {
             Ok(model) => model,
@@ -116,10 +117,13 @@ pub trait KNNModel {
         println!("Loaded in {}s", t0);
 
         println!("Beginning testing ...");
-        match model.test(6, directory, true) {
-            Ok(score) => println!("Test complete.\nAccuracy: {}%", score * 100.0),
-            Err(string) => println!("Error while testing: {}",string),
+        let test_t0 = Instant::now();
+        match model.test(6, directory, verbose) {
+            Ok(score) => println!("\nTest complete.\nAccuracy: {}%", score * 100.0),
+            Err(string) => println!("\nError while testing: {}",string),
         };
+        let test_t0 = test_t0.elapsed().as_secs_f64();
+        println!("Test complete after {} seconds.", test_t0);
     }
 
     fn new() -> impl KNNModel;
