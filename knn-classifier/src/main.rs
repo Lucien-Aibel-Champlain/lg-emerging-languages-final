@@ -76,7 +76,7 @@ fn main() {
         println!("Loading sequential model ...");
         SequentialModel::load_and_test(&directory_target, verbose);
     } else {
-        println!("Loading rayon-parallel model ...");
+        println!("Loading stdthread model ...");
         let threads_beyond_main = thread_count - 1;
 
         StdThreadModel::load_and_test(&directory_target, verbose);
