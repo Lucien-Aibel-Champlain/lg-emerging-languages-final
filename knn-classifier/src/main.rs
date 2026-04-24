@@ -1,12 +1,14 @@
 use crate::knn_model::{KNNModel};
 use crate::sequential_model::{SequentialModel};
-use crate::rayon_model::{RayonModel};
+//use crate::rayon_model::{RayonModel};
+use crate::stdthread_model::{StdThreadModel};
 use std::env;
 
 pub mod mnist_image;
 pub mod knn_model;
 pub mod sequential_model;
 pub mod rayon_model;
+pub mod stdthread_model;
 
 const DEFAULT_THREADS: usize = 1; //default to sequential
 const DEFAULT_VERBOSITY: bool = false;
@@ -76,7 +78,7 @@ fn main() {
     } else {
         println!("Loading rayon-parallel model ...");
         let threads_beyond_main = thread_count - 1;
-        rayon::ThreadPoolBuilder::new().num_threads(threads_beyond_main).build_global().expect("Error setting rayon parameters"); //set maximum threads across all rayon pools
-        RayonModel::load_and_test(&directory_target, verbose);
+
+        StdThreadModel::load_and_test(&directory_target, verbose);
     }
 }
