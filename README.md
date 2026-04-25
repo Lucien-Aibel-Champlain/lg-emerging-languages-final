@@ -6,7 +6,9 @@ A demonstration of different parallelism approaches in Rust, through implimentin
 ## Prerequisites
 
 Built using rust 1.93.1
+
 Other dependencies in cargo.toml
+
 Reccomend at least 60 MB of memory, currently untested on systems with less than eight cores but should work
 
 ## Set-up
