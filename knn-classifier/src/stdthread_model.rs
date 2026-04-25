@@ -5,12 +5,8 @@ use std::sync::mpsc::{channel, Receiver, Sender};
 use crate::mnist_image::{MNISTImage, ClassedImage};
 use crate::knn_model::{KNNModel};
 
-// This is the best implimentation I can think of without mangling the rest of the project code
-static NUMBER_OF_THREADS: usize = 10;
-
 pub struct StdThreadModel {
     dataset: Vec<ClassedImage>,
-    number_of_threads: usize,
     threads: Vec<(Option<thread::JoinHandle<()>>, Sender<Option<MNISTImage>>)>,
     return_channel: Receiver<(f64, u8)>,
     return_channel_sender: Sender<(f64, u8)>,
@@ -19,17 +15,17 @@ pub struct StdThreadModel {
 impl StdThreadModel {
 
     //Spawn threads with unique slice of the training data
-    fn initialize(&mut self) {
-        for thread_id in 0..self.number_of_threads {
+    fn initialize(&mut self, num_threads: usize) {
+        for thread_id in 0..num_threads {
 
             //for verbose?
             //println!("\n Spawning thread {} \n responsable for training data slice {}-{}", thread_id, (thread_id*(self.len()/self.number_of_threads)), (thread_id+1)*(self.len()/self.number_of_threads));
 
             // get slice of training data for thread at thread_id
-            let dataset_slice: Vec<ClassedImage> = if thread_id == self.number_of_threads - 1 {
-                self.dataset[thread_id*(self.len()/self.number_of_threads)..self.len()].to_vec()
+            let dataset_slice: Vec<ClassedImage> = if thread_id == num_threads - 1 {
+                self.dataset[thread_id*(self.len()/num_threads)..self.len()].to_vec()
             } else {
-                self.dataset[thread_id*(self.len()/self.number_of_threads)..(thread_id+1)*(self.len()/self.number_of_threads)].to_vec()
+                self.dataset[thread_id*(self.len()/num_threads)..(thread_id+1)*(self.len()/num_threads)].to_vec()
             };
             
             // make channel for input
@@ -77,6 +73,15 @@ impl StdThreadModel {
         }
     }
 
+    pub fn read_and_initialize(directory: &str, num_threads: usize) -> Result<StdThreadModel, String> {
+        match StdThreadModel::from_directory(directory) {
+            Ok(mut new_model) => {
+                new_model.initialize(num_threads);
+                Ok(new_model)
+            }
+            Err(msg) => Err(msg),
+        }
+    }
 }
 
 //This needs to exist to stop the threads from becoming detached.
@@ -99,13 +104,13 @@ impl Drop for StdThreadModel{
 }
 
 impl KNNModel for StdThreadModel {
+    #[allow(refining_impl_trait)]
     fn new() -> StdThreadModel {
         //This is the only value created in the new method, we need to wait for the training data to load before we can spawn the threads.
         let (return_channel_tx, return_channel_rx) = channel::<(f64, u8)>(); 
         return StdThreadModel {
             dataset: Vec::new(),
             //would be ideal to work this into the flow of the larger struct
-            number_of_threads: NUMBER_OF_THREADS,
             threads: Vec::new(),
             return_channel: return_channel_rx,
             return_channel_sender: return_channel_tx,
@@ -116,6 +121,8 @@ impl KNNModel for StdThreadModel {
         self.dataset.len()
     }
 
+    //Should not be used on its own; initialize must be called after. Use read_and_initialize to call both.
+    #[allow(refining_impl_trait)]
     fn from_directory(directory: &str) -> Result<StdThreadModel, String> {
         let training_directory = directory.to_owned() + "/train/";
         
@@ -142,15 +149,11 @@ impl KNNModel for StdThreadModel {
                 };
             }
         }
-        // this "initialize" call is the only thing that really differentiates the "from_directory" method in std_thread.
-        // once the testing data is loaded this method spawns the threads
-        new_model.initialize();
 
         Ok(new_model)
     }
 
     fn classify(&self, image: &MNISTImage, k: u32) -> Result<u8, String> {
-        
         // send out message to all threads via their individual input channels
         for (_, input_channel) in &self.threads {
             match input_channel.send(Some(image.clone())){
@@ -168,7 +171,7 @@ impl KNNModel for StdThreadModel {
         loop {
 
             // close loop after all threads are done with work
-            if threads_complete >= self.number_of_threads{
+            if threads_complete >= self.threads.len() {
                 break;
             }
 

@@ -3,10 +3,8 @@ use std::time::Instant;
 use crate::mnist_image::{MNISTImage};
 use std::cmp::Ordering;
 
-static K_VALUE: u32 = 6;
-
 pub trait KNNModel {
-    fn entry_to_img(entry: &Result<fs::DirEntry, std::io::Error>, current_directory: &str) -> Result<MNISTImage, String> {
+    fn entry_to_img(entry: &Result<fs::DirEntry, std::io::Error>, current_directory: &str) -> Result<MNISTImage, String>  where Self: Sized {
         //Check whether entry exists
         let entry = match entry {
             Ok(unpacked_entry) => unpacked_entry,
@@ -84,11 +82,11 @@ pub trait KNNModel {
         Ok(f64::from(successes) / f64::from(total))
     }
 
-    fn float_compare(a: f64, b: f64) -> Ordering{
+    fn float_compare(a: f64, b: f64) -> Ordering  where Self: Sized {
         a.partial_cmp(&b).expect(&format!("{} and {} cannot be compared", a, b))
     }
 
-    fn take_votes(lowest_distances: Vec<(f64, u8)>) -> u8{
+    fn take_votes(lowest_distances: Vec<(f64, u8)>) -> u8  where Self: Sized {
         const NUM_CLASSES: u8 = 10;
         let mut votes = [0; NUM_CLASSES as usize];
         for (_dist, class) in lowest_distances {
@@ -105,31 +103,8 @@ pub trait KNNModel {
         highest.1
     }
 
-    fn load_and_test(directory: &str, verbose: bool) {
-        let t0 = Instant::now();
-        let model = match Self::from_directory(directory) {
-            Ok(model) => model,
-            Err(msg) => {
-                println!("Error loading data: {}",msg);
-                return;
-            }
-        };
-        let t0 = t0.elapsed().as_secs_f64();
-        println!("Data imported successfully! Length: {}", model.len());
-        println!("Loaded in {}s", t0);
-
-        println!("Beginning testing ...");
-        let test_t0 = Instant::now();
-        match model.test(K_VALUE, directory, verbose) {
-            Ok(score) => println!("\nTest complete.\nAccuracy: {}%", score * 100.0),
-            Err(string) => println!("\nError while testing: {}",string),
-        };
-        let test_t0 = test_t0.elapsed().as_secs_f64();
-        println!("Test complete after {} seconds.", test_t0);
-    }
-
-    fn new() -> impl KNNModel;
+    fn new() -> impl KNNModel where Self: Sized;
     fn len(&self) -> usize;
-    fn from_directory(directory: &str) -> Result<impl KNNModel, String>;
+    fn from_directory(directory: &str) -> Result<impl KNNModel, String>  where Self: Sized;
     fn classify(&self, image: &MNISTImage, k: u32) -> Result<u8, String>;
 }

@@ -8,6 +8,7 @@ pub struct RayonModel {
 }
 
 impl KNNModel for RayonModel {
+    #[allow(refining_impl_trait)]
     fn new() -> RayonModel {
         RayonModel {
             dataset: Vec::new()
@@ -18,6 +19,7 @@ impl KNNModel for RayonModel {
         self.dataset.len()
     }
 
+    #[allow(refining_impl_trait)]
     fn from_directory(directory: &str) -> Result<RayonModel, String> {
         let training_directory = directory.to_owned() + "/train/";
         
