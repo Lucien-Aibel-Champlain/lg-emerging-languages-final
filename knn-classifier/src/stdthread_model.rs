@@ -1,6 +1,5 @@
 use std::fs;
 use std::thread;
-//use std::vec;
 use std::mem::{swap};
 use std::sync::mpsc::{channel, Receiver, Sender};
 use crate::mnist_image::{MNISTImage, ClassedImage};
@@ -19,30 +18,35 @@ pub struct StdThreadModel {
 
 impl StdThreadModel {
 
+    //Spawn threads with unique slice of the training data
     fn initialize(&mut self) {
-        
         for thread_id in 0..self.number_of_threads {
 
+            //for verbose?
             //println!("\n Spawning thread {} \n responsable for training data slice {}-{}", thread_id, (thread_id*(self.len()/self.number_of_threads)), (thread_id+1)*(self.len()/self.number_of_threads));
 
-            // get slice of data set for thread at thread_id
+            // get slice of training data for thread at thread_id
             let dataset_slice: Vec<ClassedImage> = if thread_id == self.number_of_threads - 1 {
                 self.dataset[thread_id*(self.len()/self.number_of_threads)..self.len()].to_vec()
             } else {
                 self.dataset[thread_id*(self.len()/self.number_of_threads)..(thread_id+1)*(self.len()/self.number_of_threads)].to_vec()
             };
             
+            // make channel for input
             let (working_image_tx, working_image_rx) = channel::<Option<MNISTImage>>();
+            // clone sender of output channel
             let local_return_channel_sender = self.return_channel_sender.clone();
-            let local_thread_id = thread_id;
-
 
             let handle = thread::spawn( move || {
-                println!("Spawned {}, covering slice size: {}", thread_id, dataset_slice.len());
+                //for verbose?
+                //println!("Spawned {}, covering slice size: {}", thread_id, dataset_slice.len());
                 loop{
-                    //println!("thread {}, awaiting", thread_id);
-                    let mut test_image: MNISTImage;
 
+                    //for verbose?
+                    //println!("thread {}, awaiting", thread_id);
+                    let test_image: MNISTImage;
+
+                    //Block thread until recv, if we get None the thread will finish its process (this isnt the best way to do this)
                     match working_image_rx.recv() {
                         Ok(message) => {
                             match message {
@@ -54,38 +58,38 @@ impl StdThreadModel {
                         },
                         Err(_) => break,
                     }
-                    //println!("thread {}, got image", thread_id);
 
+                    //iterate through training data, calculate distance and send it off via the return channel
                     for training_image in &dataset_slice {
-                        local_return_channel_sender.send((test_image.calculate_distance(&training_image.image), training_image.class));
+                        let _ = local_return_channel_sender.send((test_image.calculate_distance(&training_image.image), training_image.class));
                     }
-
-                    //println!("thread {}, done with image", thread_id);
-                    local_return_channel_sender.send((f64::INFINITY, 255 )); // send impossible result as marker for end of thread process 
+                    
+                    // send impossible result as marker for end of thread process (again sub-par method to signal that the thread is done, but I've neglected too much other work just to make this compile, I'm not spending more time here. Even if it would be an easy fix tho)
+                    let _ = local_return_channel_sender.send((f64::INFINITY, 255 )); 
                 }
-                println!("Thread {} dropping", thread_id);
+
+                //for verbose?
+                //println!("Thread {} dropping", thread_id);
             });
 
+            //Once the thread is spawned we add relevent data (its joinhandle and input channel sender) to the threads Vec
             self.threads.push((Some(handle), working_image_tx));
         }
     }
 
 }
 
+//This needs to exist to stop the threads from becoming detached.
+//All it does is send None to the input channel to get the threads to finish, then we join them
 impl Drop for StdThreadModel{
     fn drop (&mut self){
-        for mut thread in &mut self.threads{
-            thread.1.send(None);
-
+        for thread in &mut self.threads{
+            let _ = thread.1.send(None); // not sure that this is best practice but the channels would have already been contacted
             let mut handle: Option<thread::JoinHandle<()>> = None;
 
             swap(&mut handle, &mut thread.0);
-
-            match handle {
+            let _ = match handle {
                 Some(join_handle) => {
-                    if !join_handle.is_finished() {
-                        
-                    }
                     join_handle.join()
                 },
                 None => continue,
@@ -96,9 +100,11 @@ impl Drop for StdThreadModel{
 
 impl KNNModel for StdThreadModel {
     fn new() -> StdThreadModel {
-        let (return_channel_tx, return_channel_rx) = channel::<(f64, u8)>();
+        //This is the only value created in the new method, we need to wait for the training data to load before we can spawn the threads.
+        let (return_channel_tx, return_channel_rx) = channel::<(f64, u8)>(); 
         return StdThreadModel {
             dataset: Vec::new(),
+            //would be ideal to work this into the flow of the larger struct
             number_of_threads: NUMBER_OF_THREADS,
             threads: Vec::new(),
             return_channel: return_channel_rx,
@@ -136,7 +142,8 @@ impl KNNModel for StdThreadModel {
                 };
             }
         }
-        
+        // this "initialize" call is the only thing that really differentiates the "from_directory" method in std_thread.
+        // once the testing data is loaded this method spawns the threads
         new_model.initialize();
 
         Ok(new_model)
@@ -144,15 +151,18 @@ impl KNNModel for StdThreadModel {
 
     fn classify(&self, image: &MNISTImage, k: u32) -> Result<u8, String> {
         
-        
-        //println!("Sending image");
-
+        // send out message to all threads via their individual input channels
         for (_, input_channel) in &self.threads {
-            input_channel.send(Some(image.clone()));
+            match input_channel.send(Some(image.clone())){
+                Ok(_) => (),
+                Err(err) => panic!("The image could not be sent to threads {}", err),
+            };
         }
 
-
+        // distances vec is filled with impossible data 
         let mut distances: Vec<(f64, u8)> = vec![(f64::INFINITY, 255); usize::try_from(k).unwrap()];
+
+        // this is used to create an exit condition after an image has been tested against all of the data
         let mut threads_complete: usize = 0;
         
         loop {
@@ -167,10 +177,11 @@ impl KNNModel for StdThreadModel {
             match message {
                 Ok((distance, class)) => {
                     if distance == f64::INFINITY {
+                        // if a thread returns impossible data we know its done and skip it
                         threads_complete += 1;
-                        //println!("Threads complete: {} of {}", threads_complete, self.number_of_threads);
                         continue; 
                     }
+                    // linear sort capped at k (should be revisited)
                     for i in 0..k {
                         if distance < distances[usize::try_from(i).unwrap()].0 {
                             distances.insert(usize::try_from(i).unwrap(), (distance, class));
@@ -180,16 +191,11 @@ impl KNNModel for StdThreadModel {
                 Err(err) => println!("Failed to read response from thread, error: {}", err),
             }
 
-            //println!("\n\n{:?}", distances);
 
 
         }
         
-
         distances.truncate(usize::try_from(k).unwrap());
-        //println!("\n\n{:?}", distances);
-
-
         return Ok(Self::take_votes(distances))
     }
 }
