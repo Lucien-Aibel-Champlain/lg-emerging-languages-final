@@ -5,10 +5,12 @@ use std::fs;
 const MNIST_WIDTH: usize = 28;
 const MNIST_HEIGHT: usize = MNIST_WIDTH;
 
+#[derive(Clone)]
 pub struct MNISTImage {
     data: [u8; MNIST_WIDTH * MNIST_HEIGHT],
 }
 
+#[derive(Clone)]
 pub struct ClassedImage {
     pub image: MNISTImage,
     pub class: u8,

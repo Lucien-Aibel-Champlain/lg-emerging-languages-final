@@ -7,6 +7,7 @@ pub struct SequentialModel {
 }
 
 impl KNNModel for SequentialModel {
+    #[allow(refining_impl_trait)]
     fn new() -> SequentialModel {
         SequentialModel {
             dataset: Vec::new()
@@ -17,6 +18,7 @@ impl KNNModel for SequentialModel {
         self.dataset.len()
     }
 
+    #[allow(refining_impl_trait)]
     fn from_directory(directory: &str) -> Result<SequentialModel, String> {
         let training_directory = directory.to_owned() + "/train/";
         
