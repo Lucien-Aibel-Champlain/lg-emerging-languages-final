@@ -1,7 +1,7 @@
 use std::fs;
 use std::thread;
 //use std::vec;
-use std::mem::{take};
+use std::mem::{swap};
 use std::sync::mpsc::{channel, Receiver, Sender};
 use crate::mnist_image::{MNISTImage, ClassedImage};
 use crate::knn_model::{KNNModel};
@@ -12,7 +12,7 @@ static NUMBER_OF_THREADS: usize = 10;
 pub struct StdThreadModel {
     dataset: Vec<ClassedImage>,
     number_of_threads: usize,
-    threads: Vec<(thread::JoinHandle<()>, Sender<MNISTImage>)>,
+    threads: Vec<(Option<thread::JoinHandle<()>>, Sender<Option<MNISTImage>>)>,
     return_channel: Receiver<(f64, u8)>,
     return_channel_sender: Sender<(f64, u8)>,
 }
@@ -23,7 +23,7 @@ impl StdThreadModel {
         
         for thread_id in 0..self.number_of_threads {
 
-            println!("\n Spawning thread {} \n responsable for training data slice {}-{}", thread_id, (thread_id*(self.len()/self.number_of_threads)), (thread_id+1)*(self.len()/self.number_of_threads));
+            //println!("\n Spawning thread {} \n responsable for training data slice {}-{}", thread_id, (thread_id*(self.len()/self.number_of_threads)), (thread_id+1)*(self.len()/self.number_of_threads));
 
             // get slice of data set for thread at thread_id
             let dataset_slice: Vec<ClassedImage> = if thread_id == self.number_of_threads - 1 {
@@ -32,33 +32,41 @@ impl StdThreadModel {
                 self.dataset[thread_id*(self.len()/self.number_of_threads)..(thread_id+1)*(self.len()/self.number_of_threads)].to_vec()
             };
             
-            let (working_image_tx, working_image_rx) = channel::<MNISTImage>();
+            let (working_image_tx, working_image_rx) = channel::<Option<MNISTImage>>();
             let local_return_channel_sender = self.return_channel_sender.clone();
             let local_thread_id = thread_id;
 
 
             let handle = thread::spawn( move || {
-
+                println!("Spawned {}, covering slice size: {}", thread_id, dataset_slice.len());
                 loop{
-
+                    //println!("thread {}, awaiting", thread_id);
                     let mut test_image: MNISTImage;
 
-                    let message = match working_image_rx.recv() {
-                        Ok(image) => test_image = image,
-                        Err(RecvError) => break,
-                        Err(_) => continue,
-                    };
+                    match working_image_rx.recv() {
+                        Ok(message) => {
+                            match message {
+                                Some(image) => test_image = image,
+                                None => {
+                                    break
+                                },
+                            }
+                        },
+                        Err(_) => break,
+                    }
+                    //println!("thread {}, got image", thread_id);
 
                     for training_image in &dataset_slice {
                         local_return_channel_sender.send((test_image.calculate_distance(&training_image.image), training_image.class));
                     }
 
+                    //println!("thread {}, done with image", thread_id);
                     local_return_channel_sender.send((f64::INFINITY, 255 )); // send impossible result as marker for end of thread process 
-                    continue;
                 }
+                println!("Thread {} dropping", thread_id);
             });
 
-            self.threads.push((handle, working_image_tx));
+            self.threads.push((Some(handle), working_image_tx));
         }
     }
 
@@ -66,9 +74,22 @@ impl StdThreadModel {
 
 impl Drop for StdThreadModel{
     fn drop (&mut self){
-        for thread in self.threads{
-            let handle: thread::JoinHandle<()> = take(&mut thread.0);
-            handle.join();
+        for mut thread in &mut self.threads{
+            thread.1.send(None);
+
+            let mut handle: Option<thread::JoinHandle<()>> = None;
+
+            swap(&mut handle, &mut thread.0);
+
+            match handle {
+                Some(join_handle) => {
+                    if !join_handle.is_finished() {
+                        
+                    }
+                    join_handle.join()
+                },
+                None => continue,
+            };
         }
     }
 }
@@ -123,34 +144,45 @@ impl KNNModel for StdThreadModel {
 
     fn classify(&self, image: &MNISTImage, k: u32) -> Result<u8, String> {
         
+        
+        //println!("Sending image");
+
         for (_, input_channel) in &self.threads {
-            input_channel.send(image.clone());
+            input_channel.send(Some(image.clone()));
         }
 
-        let mut distances: Vec<(f64, u8)> = vec![(f64::INFINITY, 255); usize::try_from(k).unwrap()];
-        let mut counter = 0; //<o>
-        let mut threads_complete = 0;
-        
-        for message in &self.return_channel {
-            let (distance, class) = message;
-            //println!("\n\n{:?}", message);
-            if distance == f64::INFINITY {
-                threads_complete += 1;
-                continue; 
-            }
-            for i in 0..k {
-                if distance < distances[usize::try_from(i).unwrap()].0 {
-                    distances.insert(usize::try_from(i).unwrap(), (distance, class));
-                }
-            }
-            counter += 1;//<o>
-            //println!("Processed {} distances, threads_complete: {}", counter, threads_complete);
-            //println!("\n\n{:?}", distances);
 
-            // close loop after all threads are dibe with work
-            if threads_complete == self.number_of_threads-1{
+        let mut distances: Vec<(f64, u8)> = vec![(f64::INFINITY, 255); usize::try_from(k).unwrap()];
+        let mut threads_complete: usize = 0;
+        
+        loop {
+
+            // close loop after all threads are done with work
+            if threads_complete >= self.number_of_threads{
                 break;
             }
+
+            let message = self.return_channel.recv();
+
+            match message {
+                Ok((distance, class)) => {
+                    if distance == f64::INFINITY {
+                        threads_complete += 1;
+                        //println!("Threads complete: {} of {}", threads_complete, self.number_of_threads);
+                        continue; 
+                    }
+                    for i in 0..k {
+                        if distance < distances[usize::try_from(i).unwrap()].0 {
+                            distances.insert(usize::try_from(i).unwrap(), (distance, class));
+                        }
+                    }
+                },
+                Err(err) => println!("Failed to read response from thread, error: {}", err),
+            }
+
+            //println!("\n\n{:?}", distances);
+
+
         }
         
 

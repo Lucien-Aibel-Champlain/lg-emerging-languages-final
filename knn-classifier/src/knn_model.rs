@@ -3,6 +3,8 @@ use std::time::Instant;
 use crate::mnist_image::{MNISTImage};
 use std::cmp::Ordering;
 
+static K_VALUE: u32 = 6;
+
 pub trait KNNModel {
     fn entry_to_img(entry: &Result<fs::DirEntry, std::io::Error>, current_directory: &str) -> Result<MNISTImage, String> {
         //Check whether entry exists
@@ -118,7 +120,7 @@ pub trait KNNModel {
 
         println!("Beginning testing ...");
         let test_t0 = Instant::now();
-        match model.test(6, directory, verbose) {
+        match model.test(K_VALUE, directory, verbose) {
             Ok(score) => println!("\nTest complete.\nAccuracy: {}%", score * 100.0),
             Err(string) => println!("\nError while testing: {}",string),
         };
