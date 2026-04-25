@@ -188,6 +188,7 @@ impl KNNModel for StdThreadModel {
                     for i in 0..k {
                         if distance < distances[usize::try_from(i).unwrap()].0 {
                             distances.insert(usize::try_from(i).unwrap(), (distance, class));
+                            break;
                         }
                     }
                 },
